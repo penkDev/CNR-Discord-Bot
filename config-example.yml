@@ -1,0 +1,48 @@
+# Database file name.
+database:
+  name: players.db
+
+# CNR api endpoints for each server. Wouldn't recommend changing these!
+endpoints:
+  eu1: "https://api.gtacnr.net/cnr/players?serverId=EU1"
+  eu2: "https://api.gtacnr.net/cnr/players?serverId=EU2"
+  us1: "https://api.gtacnr.net/cnr/players?serverId=US1"
+  us2: "https://api.gtacnr.net/cnr/players?serverId=US2"
+  sea1: "https://api.gtacnr.net/cnr/players?serverId=SEA"
+
+# Playercount,queue, endpoint. Wouldn't recommend changing it!
+server_status_endpoint: "https://api.gtacnr.net/cnr/servers"
+
+# Server status endpoints for each server. Wouldn't recommend changing these!
+status_endpoints:
+  'server_name EU1': 'https://57.129.49.31:30130/info.json'
+  'server_name EU2': 'https://57.129.49.31:30131/info.json'
+  'server_name US1': 'https://15.204.215.61:30130/info.json'
+  'server_name US2': 'https://15.204.215.61:30131/info.json'
+  'server_name SEA1': 'https://51.79.231.52:30130/info.json'
+
+# Set your bot token here
+bottoken: bot_token_here
+
+# Set your serverID and staff role ID
+guild_id: serverID_here
+staff_role_id: role_id_here
+crewmember_role_id: role_id_here
+
+# Channel ID where the online users embed will be posted and the leaderboard
+online_users_channel_id: channel_id_here 
+leaderboard_channel_id: channel_id_here 
+
+# Add channel ID for CNR status embed
+cnr_status_channel_id: channel_id_here 
+
+# Staff actions logs channel ID
+staff_logs_channel_id: channel_id_here
+
+# Configure your images for the embed messages
+embed_images:
+  linkuuid_thumbnail: "url"
+  linking_error_thumbnail: "url"
+  myuuid_thumbnail: "url"
+  footer_thumbnail: "url"
+  logs_thumbnail: "url"
