@@ -10,11 +10,15 @@ import sys
 import os
 from datetime import datetime, timedelta, timezone 
 import urllib3
-import signal 
+import signal
+
+# Configuration 
+def load_config(path):
+    with open(path, 'r') as file:
+        return yaml.safe_load(file)
 
 config_path = os.path.join(os.path.dirname(__file__), 'config.yml')
-with open(config_path, 'r') as file:
-    config = yaml.safe_load(file)
+config = load_config(config_path)
 
 server_status_endpoint = config.get('server_status_endpoint')
 if not server_status_endpoint:
@@ -38,65 +42,126 @@ ONLINE_USERS_CHANNEL_ID = config.get('online_users_channel_id')
 LEADERBOARD_CHANNEL_ID = config.get('leaderboard_channel_id')
 LOG_CHANNEL_ID = config.get('staff_logs_channel_id')
 
+# Database Setup 
+def setup_database(db_path):
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS players (
+            uid TEXT PRIMARY KEY,
+            username TEXT,
+            playtime INTEGER DEFAULT 0,
+            last_seen TEXT,
+            server TEXT,
+            is_online INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS discord_users (
+            discord_id TEXT PRIMARY KEY,
+            uuid TEXT UNIQUE
+        )
+    ''')
+    conn.commit()
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS bot_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    conn.commit()
+
+    try:
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS online_users_embed (
+                server TEXT PRIMARY KEY,
+                message_id INTEGER
+            )
+        ''')
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+    try:
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS leaderboard_embed (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                message_id INTEGER
+            )
+        ''')
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+    return conn, c
+
+# Bot Initialization
 intents = discord.Intents.all()
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-conn = sqlite3.connect(DATABASE)
-c = conn.cursor()
-c.execute('''
-    CREATE TABLE IF NOT EXISTS players (
-        uid TEXT PRIMARY KEY,
-        username TEXT,
-        playtime INTEGER DEFAULT 0,
-        last_seen TEXT,
-        server TEXT,
-        is_online INTEGER DEFAULT 0
-    )
-''')
-conn.commit()
+conn, c = setup_database(DATABASE)
+bot.conn = conn
 
-c.execute('''
-    CREATE TABLE IF NOT EXISTS discord_users (
-        discord_id TEXT PRIMARY KEY,
-        uuid TEXT UNIQUE
-    )
-''')
-conn.commit()
+bot.config = config
+bot.GUILD_ID = GUILD_ID
+bot.LOGS_THUMBNAIL = LOGS_THUMBNAIL
+bot.LOG_CHANNEL_ID = LOG_CHANNEL_ID
 
-c.execute('''
-    CREATE TABLE IF NOT EXISTS bot_metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-''')
-conn.commit()
-
-try:
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS online_users_embed (
-            server TEXT PRIMARY KEY,
-            message_id INTEGER
-        )
-    ''')
-except sqlite3.OperationalError:
-    pass
-conn.commit()
-
-try:
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS leaderboard_embed (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            message_id INTEGER
-        )
-    ''')
-except sqlite3.OperationalError:
-    pass
-conn.commit()
+bot.MYUUID_THUMBNAIL = MYUUID_THUMBNAIL
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Event Handlers
+@bot.event
+async def on_ready():
+    try:
+        await load_cogs()
+        periodic_fetch.start()
+        await bot.tree.sync()
+        leaderboard_task.start()
+        print(f'Logged in as {bot.user}')
+    except Exception as e:
+        traceback.print_exc()
+
+# Tasks for fetching and displaying data
+@tasks.loop(minutes=1)
+async def periodic_fetch():
+    try:
+        c.execute('SELECT value FROM bot_metadata WHERE key = ?', ('last_run',))
+        result = c.fetchone()
+        if result:
+            last_run_str = result[0]
+            last_run = datetime.fromisoformat(last_run_str)
+            if last_run.tzinfo is None:
+                last_run = last_run.replace(tzinfo=timezone.utc)
+        else:
+            last_run = datetime.now(timezone.utc)
+            c.execute('INSERT INTO bot_metadata (key, value) VALUES (?, ?)', ('last_run', last_run.isoformat()))
+            conn.commit()
+        
+        current_time = datetime.now(timezone.utc)
+        elapsed_time = (current_time - last_run).total_seconds()
+        
+        await fetch_and_store_data(elapsed_time)
+        
+        await asyncio.sleep(5)
+        await display_online_users()
+        
+        c.execute('UPDATE bot_metadata SET value = ? WHERE key = ?', (current_time.isoformat(), 'last_run'))
+        conn.commit()
+    except Exception as e:
+        traceback.print_exc()
+
+@tasks.loop(minutes=2)
+async def leaderboard_task():
+    await update_leaderboard()
+
+# Functions for fetching and storing data/embeds ect
 async def fetch_and_store_data(elapsed_seconds):
     current_time = datetime.now(timezone.utc)
     try:
@@ -140,34 +205,6 @@ async def fetch_and_store_data(elapsed_seconds):
         for (uid,) in offline_players:
             c.execute('UPDATE players SET is_online = 0 WHERE uid = ?', (uid,))
 
-        conn.commit()
-    except Exception as e:
-        traceback.print_exc()
-
-@tasks.loop(minutes=1)
-async def periodic_fetch():
-    try:
-        c.execute('SELECT value FROM bot_metadata WHERE key = ?', ('last_run',))
-        result = c.fetchone()
-        if result:
-            last_run_str = result[0]
-            last_run = datetime.fromisoformat(last_run_str)
-            if last_run.tzinfo is None:
-                last_run = last_run.replace(tzinfo=timezone.utc)
-        else:
-            last_run = datetime.now(timezone.utc)
-            c.execute('INSERT INTO bot_metadata (key, value) VALUES (?, ?)', ('last_run', last_run.isoformat()))
-            conn.commit()
-        
-        current_time = datetime.now(timezone.utc)
-        elapsed_time = (current_time - last_run).total_seconds()
-        
-        await fetch_and_store_data(elapsed_time)
-        
-        await asyncio.sleep(5)
-        await display_online_users()
-        
-        c.execute('UPDATE bot_metadata SET value = ? WHERE key = ?', (current_time.isoformat(), 'last_run'))
         conn.commit()
     except Exception as e:
         traceback.print_exc()
@@ -324,10 +361,6 @@ async def update_leaderboard():
     except Exception as e:
         traceback.print_exc()
 
-@tasks.loop(minutes=2)
-async def leaderboard_task():
-    await update_leaderboard()
-
 def convert_time(input_str):
     weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     try:
@@ -372,124 +405,10 @@ async def shutdown():
     await bot.close()
     conn.close()
 
-def handle_exit(signum, frame):
-    """Handles exit signals by scheduling the shutdown coroutine."""
-    asyncio.create_task(shutdown())
-
-signal.signal(signal.SIGINT, handle_exit)
-signal.signal(signal.SIGTERM, handle_exit)
-
-@bot.event
-async def on_ready():
-    try:
-        periodic_fetch.start()
-        await bot.tree.sync()
-        leaderboard_task.start()
-    except Exception as e:
-        traceback.print_exc()
-
-@bot.tree.command(name='playtime', description='Displays the total playtime of a user.')
-@app_commands.describe(member='The member to get playtime for.')
-async def playtime(interaction: discord.Interaction, member: discord.Member):
-    try:
-        await interaction.response.defer()
-        c.execute('SELECT uuid FROM discord_users WHERE discord_id = ?', (str(member.id),))
-        link = c.fetchone()
-        
-        if not link:
-            await interaction.followup.send(f"{member.display_name} has not linked their UUID. Use `/linkuuid` to link.")
-            return
-        
-        uuid = link[0]
-        
-        c.execute('SELECT playtime FROM players WHERE uid = ?', (uuid,))
-        result = c.fetchone()
-    
-        if result:
-            playtime_seconds = result[0]
-            playtime_formatted = convert_seconds_to_hms(playtime_seconds)
-            embed = discord.Embed(
-                title=f"📊 {member.display_name}'s Playtime",
-                color=0x00FF00,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
-            embed.add_field(name='Total Playtime', value=playtime_formatted, inline=False)
-            embed.set_footer(
-                text="CNR Crew Bot by penk", 
-                icon_url=EMBED_IMAGES.get('footer_thumbnail')
-            )
-            await interaction.followup.send(embed=embed)
-        else:
-            embed = discord.Embed(
-                title="❓ No recorded playtime",
-                description=f"{member.display_name} has no recorded playtime.",
-                color=0xFFA500,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.set_footer(
-                text="CNR Crew Bot by penk", 
-                icon_url=EMBED_IMAGES.get('footer_thumbnail') 
-            )
-            await interaction.followup.send(embed=embed)
-    except Exception as e:
-        traceback.print_exc()
-        await interaction.followup.send("An error occurred while retrieving playtime.")
-
-@playtime.error
-async def playtime_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while processing the playtime command.", ephemeral=True)
-
-@bot.tree.command(name='myuuid', description='Displays the UUID linked to a specified username.')
-@app_commands.describe(username='The username to retrieve the UUID for.')
-async def myuuid(interaction: discord.Interaction, username: str):
-    try:
-        await interaction.response.defer()
-        c.execute('SELECT uid, server FROM players WHERE username = ?', (username,))
-        result = c.fetchone()
-        
-        if result:
-            uuid, server = result
-            embed = discord.Embed(
-                title=f"🔗 UUID for `{username}`",
-                description=f"**UUID:** `{uuid}`",
-                color=0x1ABC9C,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
-            embed.add_field(name="📍 Server", value=server.capitalize(), inline=True)
-            embed.set_footer(text="CNR Crew Bot by penk", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-            embed.set_thumbnail(url=MYUUID_THUMBNAIL)
-            await interaction.followup.send(embed=embed)
-        else:
-            embed = discord.Embed(
-                title="❌ UUID Not Found",
-                description=f"No UUID found for username `{username}`.",
-                color=0xE74C3C,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.set_footer(text="CNR Crew Bot by penk", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-            await interaction.followup.send(embed=embed)
-    except Exception as e:
-        traceback.print_exc()
-        embed = discord.Embed(
-            title="⚠️ Error",
-            description="An error occurred while retrieving the UUID. Please try again later.",
-            color=0xE74C3C,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_footer(text="CNR Crew Bot by penk", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        await interaction.followup.send(embed=embed)
-
-@myuuid.error
-async def myuuid_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.CommandInvokeError):
-        await interaction.response.send_message("Failed to retrieve UUID. Please ensure the username is correct.", ephemeral=True)
-    else:
-        await interaction.response.send_message("An unexpected error occurred.", ephemeral=True)
+async def load_cogs():
+    for filename in os.listdir('./commands'):
+        if filename.endswith('.py') and filename != '__init__.py':
+            await bot.load_extension(f'commands.{filename[:-3]}')
 
 async def is_crewmember(interaction: discord.Interaction) -> bool:
     """Check if the user has the CrewMember role."""
@@ -497,241 +416,19 @@ async def is_crewmember(interaction: discord.Interaction) -> bool:
         return True
     raise app_commands.CheckFailure("You do not have the required role to use this command.")
 
-@bot.tree.command(name='linkuuid', description='Link your Discord account to your game UUID.')
-@app_commands.describe(uuid='Your game UUID to link with your Discord account.')
-@app_commands.check(is_crewmember)
-async def linkuuid(interaction: discord.Interaction, uuid: str):
-    try:
-        discord_id = str(interaction.user.id)
-        
-        c.execute('SELECT uid FROM players WHERE uid = ?', (uuid,))
-        player = c.fetchone()
-        if not player:
-            await interaction.response.send_message("The provided UUID does not exist in our records.", ephemeral=True)
-            return
-        
-        c.execute('SELECT discord_id FROM discord_users WHERE uuid = ?', (uuid,))
-        existing = c.fetchone()
-        if existing:
-            await interaction.response.send_message("This UUID is already linked to another Discord account.", ephemeral=True)
-            return
-        
-        c.execute('''
-            INSERT INTO discord_users (discord_id, uuid)
-            VALUES (?, ?)
-            ON CONFLICT(discord_id) DO UPDATE SET uuid=excluded.uuid
-        ''', (discord_id, uuid))
-        conn.commit()
-        
-        embed = discord.Embed(
-            title="✅ Successfully Linked",
-            description="Your Discord account has been successfully linked to your UUID.",
-            color=0x00FF00,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
-        embed.add_field(name='Linked UUID', value=uuid, inline=False)
-        embed.set_footer(text="CNR Crew Bot by penk", icon_url=LINKUUID_THUMBNAIL)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    except app_commands.CheckFailure as e:
-        await interaction.response.send_message(str(e), ephemeral=True)
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ Linking Error",
-            description="An error occurred while linking your UUID. Please try again.",
-            color=0xFF0000,
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None)
-        embed.set_footer(text="CNR Crew Bot by penk", icon_url=LINKING_ERROR_THUMBNAIL)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@linkuuid.error
-async def linkuuid_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message(str(error), ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while linking your UUID.", ephemeral=True)
-
 def convert_seconds_to_hms(seconds):
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{int(hours)}h {int(minutes)}m {int(secs)}s"
 
-@bot.command(name='sync')
-@commands.has_role(int(STAFF_ROLE_ID))
-async def sync(ctx):
-    try:
-        if not GUILD_ID:
-            await ctx.send("Guild ID is not configured.")
-            return
+# Shutdown Handlers
 
-        bot.tree.copy_global_to(guild=discord.Object(id=GUILD_ID))
-        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        await ctx.send("Synchronised successfully.")
-    except Exception as e:
-        await ctx.send(f"Synchronisation failed: {e}")
+def handle_exit(signum, frame):
+    """Handles exit signals by scheduling the shutdown coroutine."""
+    asyncio.create_task(shutdown())
 
-@sync.error
-async def sync_error(ctx: commands.Context, error):
-    if isinstance(error, commands.MissingRole):
-        await ctx.send("You don't have the required role to use this command.")
-    else:
-        await ctx.send("An error occurred while synchronizing commands.")
-
-@bot.tree.command(name='resetleaderboard', description='Reset all players\' playtime to 0 (Staff only).')
-@app_commands.default_permissions(administrator=True)
-async def reset_leaderboard(interaction: discord.Interaction):
-    """Reset all players' playtime to 0. Staff only."""
-    try:
-        c.execute('UPDATE players SET playtime = 0')
-        conn.commit()
-        await interaction.response.send_message("✅ All player playtimes have been reset to 0.", ephemeral=True)
-    except Exception as e:
-        traceback.print_exc()
-        await interaction.response.send_message("❌ An error occurred while resetting playtimes.", ephemeral=True)
-
-@reset_leaderboard.error
-async def reset_leaderboard_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message(str(error), ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while resetting the leaderboard.", ephemeral=True)
-
-@bot.tree.command(name="mute", description="Mute a player.", guild=discord.Object(id=GUILD_ID))
-@app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    member="The member to mute",
-    reason="Reason for muting",
-    duration="Duration of the mute"
-)
-@app_commands.choices(duration=[
-    app_commands.Choice(name="1 minute", value="1 minute"),
-    app_commands.Choice(name="5 minutes", value="5 minutes"),
-    app_commands.Choice(name="10 minutes", value="10 minutes"),
-    app_commands.Choice(name="30 minutes", value="30 minutes"),
-    app_commands.Choice(name="1 hour", value="1 hour"),
-    app_commands.Choice(name="4 hours", value="4 hours"),
-    app_commands.Choice(name="10 hours", value="10 hours"),
-    app_commands.Choice(name="1 day", value="1 day"),
-    app_commands.Choice(name="1 week", value="1 week")
-])
-async def mute(
-    interaction: discord.Interaction, 
-    member: discord.Member, 
-    reason: str, 
-    duration: app_commands.Choice[str]
-):
-    time_dict = {
-        "1 minute": 1,
-        "5 minutes": 5,
-        "10 minutes": 10,
-        "30 minutes": 30,
-        "1 hour": 60,
-        "4 hours": 240,
-        "10 hours": 600,
-        "1 day": 1440,
-        "1 week": 10080
-    }
-
-    duration_minutes = time_dict.get(duration.value)
-    if duration_minutes:
-        until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
-        await member.timeout(until, reason=reason)
-        embed = discord.Embed(
-            title="🔇 User Muted",
-            description=(
-                f"**Muted User:** {member.mention} ({member})\n"
-                f"**Reason:** {reason}\n"
-                f"**Muted By:** {interaction.user.mention} ({interaction.user})\n"
-                f"**Duration:** {duration.name}"
-            ),
-            color=discord.Color.blue(),
-            timestamp=interaction.created_at
-        )
-        embed.set_footer(text="CNR Crew Bot by penk", icon_url=LOGS_THUMBNAIL)
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        await log_channel.send(embed=embed)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    else:
-        await interaction.response.send_message("Invalid mute duration.", ephemeral=True)
-
-@mute.error
-async def mute_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("You don't have permission to mute members.", ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while muting the user.", ephemeral=True)
-
-@bot.tree.command(name="kick", description="Kick a player.", guild=discord.Object(id=GUILD_ID))
-@app_commands.checks.has_permissions(kick_members=True)
-@app_commands.describe(
-    member="The member to kick",
-    reason="Reason for kicking"
-)
-async def kick(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    reason: str
-):
-    await interaction.guild.kick(member, reason=reason)
-    embed = discord.Embed(
-        title="🚪 User Kicked",
-        description=(
-            f"**Kicked User:** {member.mention} ({member})\n"
-            f"**Reason:** {reason}\n"
-            f"**Kicked By:** {interaction.user.mention} ({interaction.user})"
-        ),
-        color=discord.Color.orange(),
-        timestamp=interaction.created_at
-    )
-    embed.set_footer(text="CNR Crew Bot by penk", icon_url=LOGS_THUMBNAIL)
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(embed=embed)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@kick.error
-async def kick_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("You don't have permission to kick members.", ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while kicking the user.", ephemeral=True)
-
-@bot.tree.command(name="ban", description="Ban a player.", guild=discord.Object(id=GUILD_ID))
-@app_commands.checks.has_permissions(ban_members=True)
-@app_commands.describe(
-    member="The member to ban",
-    reason="Reason for banning"
-)
-async def ban(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    reason: str
-):
-    await interaction.guild.ban(member, reason=reason)
-    embed = discord.Embed(
-        title="🚫 User Banned",
-        description=(
-            f"**Banned User:** {member.mention} ({member})\n"
-            f"**Reason:** {reason}\n"
-            f"**Banned By:** {interaction.user.mention} ({interaction.user})"
-        ),
-        color=discord.Color.red(),
-        timestamp=interaction.created_at
-    )
-    embed.set_footer(text="CNR Crew Bot by penk", icon_url=LOGS_THUMBNAIL)
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(embed=embed)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@ban.error
-async def ban_error(interaction: discord.Interaction, error):
-    if isinstance(error, discord.app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("You don't have permission to ban members.", ephemeral=True)
-    else:
-        await interaction.response.send_message("An error occurred while banning the user.", ephemeral=True)
+signal.signal(signal.SIGINT, handle_exit)
+signal.signal(signal.SIGTERM, handle_exit)
 
 bot.run(BOTTOKEN)
