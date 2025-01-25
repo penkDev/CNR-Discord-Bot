@@ -83,8 +83,7 @@ embed_images:
 ## Commands
 
 - `/playtime @user`: Displays the total playtime of the mentioned user.
-- `/linkuuid <your_uuid>`: Links your Discord account to your game UUID.
-- `/myuuid <username>`: Displays the UUID linked to the specified username.
+- `/link <CNR_Username>`: Links your Discord account to your game UUID.
 - `/resetleaderboard`: Resets the playtime of all users in the database back to 0
 - `/mute <username> <reason> <duration>`: Timesout a discord member.
 - `/kick <username> <reason>`: Kicks a specific member from the discord server.
