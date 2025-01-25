@@ -122,7 +122,6 @@ async def on_ready():
     try:
         await load_cogs()
         periodic_fetch.start()
-        await bot.tree.sync()
         leaderboard_task.start()
         print(f'Logged in as {bot.user}')
     except Exception as e:

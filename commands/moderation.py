@@ -28,6 +28,20 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Synchronization failed: {e}")
 
+    @commands.command(name='clearslash')
+    async def clear_slash_commands(self, ctx):
+        """Clear all slash commands from the configured guild."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.send("❌ You don't have the required permissions to use this command.")
+            return
+
+        try:
+            self.bot.tree.clear_commands(guild=discord.Object(id=self.bot.GUILD_ID))
+            await self.bot.tree.sync(guild=discord.Object(id=self.bot.GUILD_ID))
+            await ctx.send("🔄 All slash commands have been cleared from the server.")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to clear slash commands: {e}")
+
     @app_commands.command(name='kick', description='Kick a player.')
     @app_commands.describe(
         member='The member to kick',
