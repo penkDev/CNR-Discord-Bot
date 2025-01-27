@@ -1,9 +1,8 @@
-# ...existing code...
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import timedelta  # Added import for timedelta
+from datetime import timedelta 
 import traceback
 
 class Moderation(commands.Cog):
@@ -134,7 +133,7 @@ class Moderation(commands.Cog):
 
         duration_minutes = time_dict.get(duration.value)
         if duration_minutes:
-            until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)  # Use timedelta
+            until = discord.utils.utcnow() + timedelta(minutes=duration_minutes)
             try:
                 await member.timeout(until, reason=reason)
                 embed = discord.Embed(
@@ -187,7 +186,6 @@ class Moderation(commands.Cog):
         else:
             await interaction.response.send_message("❌ An error occurred while muting the user.", ephemeral=True)
 
-    # ...existing code...
 
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
