@@ -53,10 +53,10 @@ endpoints:
 server_status_endpoint: "https://api.gtacnr.net/cnr/servers"
 
 status_endpoints:
-  'server_name EU1': 'https://57.129.49.31:30130/info.json'
-  'server_name EU2': 'https://57.129.49.31:30131/info.json'
-  'server_name US1': 'https://15.204.215.61:30130/info.json'
-  'server_name US2': 'https://15.204.215.61:30131/info.json'
+  'server_name EU1': 'https://163.123.193.20:30120/info.json'
+  'server_name EU2': 'https://163.123.193.20:30121/info.json'
+  'server_name US1': 'https://45.88.228.198:30120/info.json'
+  'server_name US2': 'https://45.88.228.198:30121/info.json'
   'server_name SEA1': 'https://51.79.231.52:30130/info.json'
 
 bottoken: bot_token_here
