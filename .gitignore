@@ -1,3 +1,5 @@
 config.yml
 players.db
 players.db-journal
+requirements.txt
+commands/__pycache__/verification.cpython-312.pyc

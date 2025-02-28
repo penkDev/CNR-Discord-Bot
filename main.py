@@ -116,14 +116,24 @@ bot.MYUUID_THUMBNAIL = MYUUID_THUMBNAIL
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Event Handlers
+last_message_update = datetime.now(timezone.utc)
+
 @bot.event
 async def on_ready():
     try:
+        print(f'Logged in as {bot.user}')
+        
         await load_cogs()
+        
         periodic_fetch.start()
         leaderboard_task.start()
-        print(f'Logged in as {bot.user}')
+        
+        await asyncio.sleep(5)
+        
+        if 'verification' in bot.config and bot.config['verification'].get('enabled', True):
+            verification_cog = bot.get_cog('VerificationCog')
+            if verification_cog:
+                await verification_cog.check_and_send_verification_message()
     except Exception as e:
         traceback.print_exc()
 
@@ -169,43 +179,61 @@ async def fetch_and_store_data(elapsed_seconds):
         async with aiohttp.ClientSession() as session:
             for server, url in ENDPOINTS.items():
                 try:
-                    async with session.get(url) as response:
-                        try:
-                            response.raise_for_status()
-                        except aiohttp.ClientResponseError as e:
-                            print(f"Request failed: {e}")
-                            print(f"Response: {await response.text()}")
-                            await asyncio.sleep(5)
-                            continue
-                        try:
-                            data = await response.json(content_type=None)
-                        except aiohttp.ContentTypeError:
-                            print(f"Unexpected content type: {response.content_type} from {url}")
-                            print(f"Response: {await response.text()}")
-                            await asyncio.sleep(5)
-                            continue
-                        for player in data:
-                            uid = player.get('Uid')
-                            username = player.get('Username', {}).get('Username')
-                            if uid and username:
-                                fetched_uids.add(uid)
-                                c.execute('SELECT playtime, last_seen FROM players WHERE uid = ?', (uid,))
-                                result = c.fetchone()
-                                if result:
-                                    playtime, last_seen_str = result
-                                    playtime += int(elapsed_seconds)
-                                    c.execute('''
-                                        UPDATE players
-                                        SET username = ?, last_seen = ?, is_online = 1, server = ?, playtime = ?
-                                        WHERE uid = ?
-                                    ''', (username, current_time.isoformat(), server, playtime, uid))
-                                else:
-                                    c.execute('''
-                                        INSERT INTO players (uid, username, last_seen, server, is_online, playtime)
-                                        VALUES (?, ?, ?, ?, 1, 0)
-                                    ''', (uid, username, current_time.isoformat(), server))
+                    try:
+                        async with session.get(url, timeout=10) as response:
+                            if response.status == 404:
+                                print(f"Server {server.upper()} not found (404). The server might be offline.")
+                                await asyncio.sleep(5)
+                                continue
+                                
+                            if not response.ok:
+                                print(f"Server {server.upper()} returned status code {response.status}. Skipping.")
+                                await asyncio.sleep(5)
+                                continue
+                                
+                            try:
+                                data = await response.json(content_type=None)
+                            except aiohttp.ContentTypeError:
+                                print(f"Server {server.upper()} returned unexpected content type: {response.content_type}")
+                                await asyncio.sleep(5)
+                                continue
+                                
+                            for player in data:
+                                uid = player.get('Uid')
+                                username = player.get('Username', {}).get('Username')
+                                if uid and username:
+                                    fetched_uids.add(uid)
+                                    c.execute('SELECT playtime, last_seen FROM players WHERE uid = ?', (uid,))
+                                    result = c.fetchone()
+                                    if result:
+                                        playtime, last_seen_str = result
+                                        playtime += int(elapsed_seconds)
+                                        c.execute('''
+                                            UPDATE players
+                                            SET username = ?, last_seen = ?, is_online = 1, server = ?, playtime = ?
+                                            WHERE uid = ?
+                                        ''', (username, current_time.isoformat(), server, playtime, uid))
+                                    else:
+                                        c.execute('''
+                                            INSERT INTO players (uid, username, last_seen, server, is_online, playtime)
+                                            VALUES (?, ?, ?, ?, 1, 0)
+                                        ''', (uid, username, current_time.isoformat(), server))
+                    except aiohttp.ClientResponseError as e:
+                        print(f"Server {server.upper()} is offline or returned an error: {e.status}")
                         await asyncio.sleep(5)
+                        continue
+                    except aiohttp.ClientConnectionError:
+                        print(f"Server {server.upper()} connection failed. The server may be offline.")
+                        await asyncio.sleep(5)
+                        continue
+                    except asyncio.TimeoutError:
+                        print(f"Request to server {server.upper()} timed out. The server may be unresponsive.")
+                        await asyncio.sleep(5)
+                        continue
+                    
+                    await asyncio.sleep(5)
                 except Exception as e:
+                    print(f"Unexpected error when processing server {server.upper()}: {str(e)}")
                     traceback.print_exc()
                     await asyncio.sleep(5)
 
@@ -220,15 +248,20 @@ async def fetch_and_store_data(elapsed_seconds):
 
         conn.commit()
     except Exception as e:
+        print(f"Global error in fetch_and_store_data: {str(e)}")
         traceback.print_exc()
 
 async def display_online_users():
     try:
+        global last_message_update
         channel = bot.get_channel(ONLINE_USERS_CHANNEL_ID)
         if not channel:
             return
 
         online_users = {}
+        server_embeds = {}
+        server_message_ids = {}
+        
         for server in ENDPOINTS.keys():
             c.execute('''
                 SELECT p.username
@@ -238,8 +271,11 @@ async def display_online_users():
             ''', (server,))
             users = [row[0] for row in c.fetchall()]
             online_users[server] = users
-
-        await asyncio.sleep(5)
+            
+            c.execute('SELECT message_id FROM online_users_embed WHERE server = ?', (server,))
+            result = c.fetchone()
+            if result:
+                server_message_ids[server] = result[0]
 
         server_key_map = {
             'eu1': 'EU1',
@@ -250,76 +286,52 @@ async def display_online_users():
         }
 
         connector = aiohttp.TCPConnector(ssl=False)
+        server_status = {}
+        
+        # Get server status
         async with aiohttp.ClientSession(connector=connector) as session:
             try:
-                async with session.get(server_status_endpoint) as response:
-                    try:
-                        response.raise_for_status()
-                    except aiohttp.ClientResponseError as e:
-                        print(f"Request failed: {e}")
-                        print(f"Response: {await response.text()}")
-                        server_status = {}
-                        await asyncio.sleep(5)
-                    else:
+                async with session.get(server_status_endpoint, timeout=10) as response:
+                    if response.ok:
                         try:
                             server_status_data = await response.json(content_type=None)
                             server_status = {entry['Id'].lower(): entry for entry in server_status_data}
                         except aiohttp.ContentTypeError:
-                            print(f"Unexpected content type: {response.content_type} from {server_status_endpoint}")
-                            print(f"Response: {await response.text()}")
-                            server_status = {}
-                            await asyncio.sleep(5)
+                            print(f"Server status endpoint returned unexpected content type")
+                    else:
+                        print(f"Server status endpoint returned status code {response.status}")
             except Exception as e:
-                traceback.print_exc()
-                server_status = {}
-                await asyncio.sleep(5)
-
+                print(f"Error fetching server status: {str(e)}")
+                
             for server, users in online_users.items():
-                embed = discord.Embed(
-                    title=f"🌐 Online Players - {server.upper()}",
-                    color=0x00BFFF,
-                    timestamp=datetime.now(timezone.utc)
-                )
-
-                await asyncio.sleep(3)
-
                 status_id = server_key_map.get(server, server).lower()
                 status = server_status.get(status_id, {})
 
                 players_online = status.get('Players', 'N/A')
                 queued_players = status.get('QueuedPlayers', 'N/A')
-
+                time_till_restart = 'N/A'
+                
                 status_endpoint = config.get('status_endpoints', {}).get(f'server_name {server.upper()}')
                 if status_endpoint:
                     try:
-                        async with session.get(status_endpoint) as response:
-                            try:
-                                response.raise_for_status()
-                            except aiohttp.ClientResponseError as e:
-                                print(f"Request failed: {e}")
-                                print(f"Response: {await response.text()}")
-                                time_till_restart = 'N/A'
-                                await asyncio.sleep(5)
-                            else:
+                        async with session.get(status_endpoint, timeout=10) as response:
+                            if response.ok:
                                 try:
                                     status_data = await response.json(content_type=None)
                                     time_string = status_data.get('vars', {}).get('Time')
                                     if time_string:
                                         seconds_remaining = convert_time(time_string)
                                         time_till_restart = seconds_remaining_to_human_readable(seconds_remaining)
-                                    else:
-                                        time_till_restart = 'N/A'
-                                except aiohttp.ContentTypeError:
-                                    print(f"Unexpected content type: {response.content_type} from {status_endpoint}")
-                                    print(f"Response: {await response.text()}")
-                                    time_till_restart = 'N/A'
-                                    await asyncio.sleep(5) 
+                                except Exception:
+                                    pass
                     except Exception as e:
-                        traceback.print_exc()
-                        time_till_restart = 'N/A'
-                        await asyncio.sleep(5)
-                else:
-                    time_till_restart = 'N/A'
+                        print(f"Server {server.upper()} status error: {type(e).__name__}")
+                
+                embed = discord.Embed(
+                    title=f"🌐 Online Players - {server.upper()}",
+                    color=0x00BFFF,
+                    timestamp=datetime.now(timezone.utc)
+                )
 
                 embed.add_field(name="Players Online", value=f"`{players_online}`", inline=True)
                 embed.add_field(name="Queue Length", value=f"`{queued_players}`", inline=True)
@@ -332,32 +344,53 @@ async def display_online_users():
                     embed.add_field(name="Online Users", value="No online players.", inline=False)
 
                 embed.set_footer(text="CNR Crew Bot by penk", icon_url=FOOTER_THUMBNAIL)
-
-                c.execute('SELECT message_id FROM online_users_embed WHERE server = ?', (server,))
-                result = c.fetchone()
-                if result:
-                    message_id = result[0]
+                
+                server_embeds[server] = embed
+        
+        for server, embed in server_embeds.items():
+            try:
+                now = datetime.now(timezone.utc)
+                time_since_last_update = (now - last_message_update).total_seconds()
+                
+                if time_since_last_update < 2:
+                    await asyncio.sleep(3 - time_since_last_update)
+                
+                message_id = server_message_ids.get(server)
+                if message_id:
                     try:
                         message = await channel.fetch_message(message_id)
                         await message.edit(embed=embed)
+                        last_message_update = datetime.now(timezone.utc)
                     except discord.NotFound:
+                        await asyncio.sleep(1)
                         new_message = await channel.send(embed=embed)
-                        c.execute('UPDATE online_users_embed SET message_id = ? WHERE server = ?', (new_message.id, server))
+                        c.execute('UPDATE online_users_embed SET message_id = ? WHERE server = ?', 
+                                  (new_message.id, server))
                         conn.commit()
+                        last_message_update = datetime.now(timezone.utc)
                 else:
                     new_message = await channel.send(embed=embed)
                     c.execute('INSERT INTO online_users_embed (server, message_id) VALUES (?, ?)',
                               (server, new_message.id))
                     conn.commit()
+                    last_message_update = datetime.now(timezone.utc)
+                
+                await asyncio.sleep(3)
+                
+            except Exception as e:
+                print(f"Error updating Discord embed for server {server}: {e}")
     except Exception as e:
+        print(f"Global error in display_online_users: {str(e)}")
         traceback.print_exc()
 
 async def update_leaderboard():
     try:
+        global last_message_update
         channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
         if not channel:
             return
 
+        # Query data
         c.execute('''
             SELECT p.username, p.playtime
             FROM players p
@@ -367,13 +400,12 @@ async def update_leaderboard():
         ''')
         top_players = c.fetchall()
 
+        # Create embed
         embed = discord.Embed(
             title="🏆 Top 10 Players by Playtime",
             color=0xFFD700,
             timestamp=datetime.now(timezone.utc)
         )
-
-        await asyncio.sleep(3)
 
         if top_players:
             leaderboard = ""
@@ -386,6 +418,11 @@ async def update_leaderboard():
 
         embed.set_footer(text="CNR Crew Bot by penk", icon_url=FOOTER_THUMBNAIL)
 
+        now = datetime.now(timezone.utc)
+        time_since_last_update = (now - last_message_update).total_seconds()
+        if time_since_last_update < 2:
+            await asyncio.sleep(2 - time_since_last_update)
+
         c.execute('SELECT message_id FROM leaderboard_embed WHERE id = 1')
         result = c.fetchone()
         if result:
@@ -393,14 +430,17 @@ async def update_leaderboard():
             try:
                 message = await channel.fetch_message(message_id)
                 await message.edit(embed=embed)
+                last_message_update = datetime.now(timezone.utc)
             except discord.NotFound:
                 new_message = await channel.send(embed=embed)
                 c.execute('UPDATE leaderboard_embed SET message_id = ? WHERE id = 1', (new_message.id,))
                 conn.commit()
+                last_message_update = datetime.now(timezone.utc)
         else:
             new_message = await channel.send(embed=embed)
             c.execute('INSERT INTO leaderboard_embed (id, message_id) VALUES (1, ?)', (new_message.id,))
             conn.commit()
+            last_message_update = datetime.now(timezone.utc)
     except Exception as e:
         traceback.print_exc()
 
@@ -449,9 +489,14 @@ async def shutdown():
     conn.close()
 
 async def load_cogs():
+    """Load all command cogs from the commands directory."""
     for filename in os.listdir('./commands'):
         if filename.endswith('.py') and filename != '__init__.py':
-            await bot.load_extension(f'commands.{filename[:-3]}')
+            try:
+                await bot.load_extension(f'commands.{filename[:-3]}')
+            except Exception as e:
+                print(f"Failed to load extension {filename}: {e}")
+                traceback.print_exc()
 
 async def is_crewmember(interaction: discord.Interaction) -> bool:
     """Check if the user has the CrewMember role."""
@@ -474,4 +519,8 @@ def handle_exit(signum, frame):
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
 
-bot.run(BOTTOKEN)
+try:
+    bot.run(BOTTOKEN)
+except Exception as e:
+    print(f"Failed to start bot: {e}")
+    traceback.print_exc()

@@ -46,3 +46,10 @@ embed_images:
   myuuid_thumbnail: "url"
   footer_thumbnail: "url"
   logs_thumbnail: "url"
+
+# Verification system configuration
+verification:
+  enabled: false  # Set to true to enable verification system, false to disable
+  verification_channel_id: channel_id_here  # Channel where verification message will be posted
+  verified_role_id: role_id_here  # Role that will be given after verification
+  logo_url: "url"  # Logo for verification embeds

@@ -2,3 +2,6 @@ discord.py
 PyYAML
 requests
 urllib3
+Pillow
+APScheduler
+aiohttp

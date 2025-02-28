@@ -8,13 +8,15 @@ Discord bot designed for CNR crews to track and manage their Discord server.
 - **UUID Linking**: Allows users to link their Discord accounts to their game UUIDs.
 - **Leaderboards**: Displays top players based on playtime.
 - **Moderation Tools**: Includes commands for warnings, message monitoring, and profanity filtering.
+- **Verification**: Captcha verification that generates a text captcha image that user has to retype. Is possible to be disabled in the config.
+
 
 ## Installation
 
 1. **Clone the repository**:
 
     ```bash
-    git clone https://github.com/yourusername/CNR-Discord-Bot.git
+    git clone https://github.com/penkDev/CNR-Discord-Bot.git
     cd CNR-Discord-Bot
     ```
 
@@ -40,9 +42,11 @@ Discord bot designed for CNR crews to track and manage their Discord server.
 The `config.yml` file contains the bot's configuration settings:
 
 ```yaml
+# Database file name.
 database:
   name: players.db
 
+# CNR api endpoints for each server. Wouldn't recommend changing these!
 endpoints:
   eu1: "https://api.gtacnr.net/cnr/players?serverId=EU1"
   eu2: "https://api.gtacnr.net/cnr/players?serverId=EU2"
@@ -50,34 +54,49 @@ endpoints:
   us2: "https://api.gtacnr.net/cnr/players?serverId=US2"
   sea1: "https://api.gtacnr.net/cnr/players?serverId=SEA"
 
+# Playercount,queue, endpoint. Wouldn't recommend changing it!
 server_status_endpoint: "https://api.gtacnr.net/cnr/servers"
 
+# Server status endpoints for each server. Wouldn't recommend changing these!
 status_endpoints:
-  'server_name EU1': 'https://163.123.193.20:30120/info.json'
-  'server_name EU2': 'https://163.123.193.20:30121/info.json'
+  'server_name EU1': 'https://195.181.175.122:30120/info.json'
+  'server_name EU2': 'https://195.181.175.122:30121/info.json'
   'server_name US1': 'https://45.88.228.198:30120/info.json'
   'server_name US2': 'https://45.88.228.198:30121/info.json'
   'server_name SEA1': 'https://51.79.231.52:30130/info.json'
 
+# Set your bot token here
 bottoken: bot_token_here
 
+# Set your serverID and staff role ID
 guild_id: serverID_here
 staff_role_id: role_id_here
 crewmember_role_id: role_id_here
 
+# Channel ID where the online users embed will be posted and the leaderboard
 online_users_channel_id: channel_id_here 
 leaderboard_channel_id: channel_id_here 
 
+# Add channel ID for CNR status embed
 cnr_status_channel_id: channel_id_here 
 
+# Staff actions logs channel ID
 staff_logs_channel_id: channel_id_here
 
+# Configure your images for the embed messages
 embed_images:
   linkuuid_thumbnail: "url"
   linking_error_thumbnail: "url"
   myuuid_thumbnail: "url"
   footer_thumbnail: "url"
   logs_thumbnail: "url"
+
+# Verification system configuration
+verification:
+  enabled: false  # Set to true to enable verification system, false to disable
+  verification_channel_id: channel_id_here  # Channel where verification message will be posted
+  verified_role_id: role_id_here  # Role that will be given after verification
+  logo_url: "url"  # Logo for verification embeds
 ```
 
 ## Commands
