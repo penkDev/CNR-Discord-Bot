@@ -1,0 +1,57 @@
+# Database file name.
+database:
+  name: players.db
+
+# CNR api endpoints for each server. Wouldn't recommend changing these!
+endpoints:
+  eu1: "https://api.gtacnr.net/cnr/players?serverId=EU1"
+  eu2: "https://api.gtacnr.net/cnr/players?serverId=EU2"
+  us1: "https://api.gtacnr.net/cnr/players?serverId=US1"
+  us2: "https://api.gtacnr.net/cnr/players?serverId=US2"
+
+# Playercount,queue, endpoint. Wouldn't recommend changing it!
+server_status_endpoint: "https://api.gtacnr.net/cnr/servers"
+
+# Server status endpoints for each server. Wouldn't recommend changing these!
+status_endpoints:
+  'server_name EU1': 'https://109.61.89.213:30120/info.json'
+  'server_name EU2': 'https://109.61.89.213:30121/info.json'
+  'server_name US1': 'https://212.102.58.130:30120/info.json'
+  'server_name US2': 'https://212.102.58.130:30121/info.json'
+
+# Set your bot token here
+bottoken: YOUR_BOT_TOKEN_HERE
+
+# Set your serverID and staff role ID
+guild_id: YOUR_GUILD_ID_HERE
+staff_role_id: YOUR_STAFF_ROLE_ID_HERE
+crewmember_role_id: YOUR_CREWMEMBER_ROLE_ID_HERE
+
+# Channel ID where the online users embed will be posted and the leaderboard
+online_users_channel_id: YOUR_ONLINE_USERS_CHANNEL_ID_HERE
+leaderboard_channel_id: YOUR_LEADERBOARD_CHANNEL_ID_HERE
+
+# Add channel ID for CNR status embed
+cnr_status_channel_id: YOUR_CNR_STATUS_CHANNEL_ID_HERE
+
+# Staff actions logs channel ID
+staff_logs_channel_id: YOUR_STAFF_LOGS_CHANNEL_ID_HERE
+
+# Monitor bad conduct in a specific channel.
+monitored_channel_id: YOUR_MONITORED_CHANNEL_ID_HERE
+
+# Configure your images for the embed messages
+embed_images:
+  linkuuid_thumbnail: "YOUR_LINKUUID_THUMBNAIL_URL_HERE"
+  linking_error_thumbnail: "YOUR_LINKING_ERROR_THUMBNAIL_URL_HERE"
+  myuuid_thumbnail: "YOUR_MYUUID_THUMBNAIL_URL_HERE"
+  footer_thumbnail: "YOUR_FOOTER_THUMBNAIL_URL_HERE"
+  logs_thumbnail: "YOUR_LOGS_THUMBNAIL_URL_HERE"
+
+# Verification module settings
+verification:
+  enabled: true  # Set to false to disable verification module
+  verification_channel_id: YOUR_VERIFICATION_CHANNEL_ID_HERE
+  verified_role_id: YOUR_VERIFIED_ROLE_ID_HERE
+  server_id: YOUR_SERVER_ID_HERE
+  logo_url: "YOUR_LOGO_URL_HERE"
