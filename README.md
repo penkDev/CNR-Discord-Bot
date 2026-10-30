@@ -1,113 +1,82 @@
 # CNR-Discord-Bot
 
-Discord bot designed for CNR crews to track and manage their Discord server.
+Discord bot for CNR crews to track and manage their Discord server. Written in Node.js with discord.js.
 
 ## Features
 
-- **Player Tracking**: Automatically tracks and updates player playtime.
-- **UUID Linking**: Allows users to link their Discord accounts to their game UUIDs.
-- **Leaderboards**: Displays top players based on playtime.
-- **Moderation Tools**: Includes commands for warnings, message monitoring, and profanity filtering.
-- **Verification**: Captcha verification that generates a text captcha image that user has to retype. Is possible to be disabled in the config.
+- **Player tracking**: polls the CNR API every minute and tracks playtime per player.
+- **UUID linking**: members link their Discord account to their game username (crewmember role required).
+- **Online embeds and leaderboard**: one live embed per server and a top 10 playtime leaderboard, both edited in place.
+- **Moderation**: `/kick`, `/ban`, `/mute`, `/warn` with role hierarchy checks, warning history and an automatic timeout when a member reaches a configurable number of warnings.
+- **Profanity filter and message monitoring**: deletes messages with listed words in the monitored channel and logs deleted and edited messages to the staff log.
+- **Verification**: captcha image, answered through a popup form. Can be disabled in the config.
 
+## Requirements
+
+- Node.js 26 or newer
+- A Discord application with a bot token
+- In the Discord developer portal under *Bot*, enable the privileged intents **Server Members Intent** and **Message Content Intent**
+- Bot permissions: View Channels, Send Messages, Embed Links, Manage Messages, Manage Roles, Kick Members, Ban Members, Moderate Members. For verification the bot role must be above the verified role.
+
+The captcha text is drawn with a system font (Arial, DejaVu Sans, Liberation Sans or Helvetica). On a minimal Linux server install one of them, for example `fonts-dejavu-core`.
 
 ## Installation
 
-1. **Clone the repository**:
+```bash
+git clone https://github.com/penkDev/CNR-Discord-Bot.git
+cd CNR-Discord-Bot
+npm install
+cp config.example.yml config.yml
+```
 
-    ```bash
-    git clone https://github.com/penkDev/CNR-Discord-Bot.git
-    cd CNR-Discord-Bot
-    ```
+Fill in `config.yml`, then start the bot:
 
-2. **Install dependencies**:
+```bash
+npm start
+```
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+Slash commands are registered in your guild on every start. Run `npm test` to run the tests.
 
-3. **Configure the bot**:
-
-    - Rename `config.example.yml` to `config.yml`.
-    - Add your Discord bot token and configure all of the empty fields
-
-4. **Run the bot**:
-
-    ```bash
-    python main.py
-    ```
+An existing `players.db` from the Python version keeps working. Copy it into the project folder (or point `database.name` at it). The bot adds the new `warnings` table on first start.
 
 ## Configuration
 
-The `config.yml` file contains the bot's configuration settings:
+Copy `config.example.yml` to `config.yml` (it is gitignored). The bot refuses to start and lists every problem if the token, `guild_id`, `staff_role_id`, `crewmember_role_id`, `server_status_endpoint` or `endpoints` are missing or still placeholders.
 
-```yaml
-# Database file name.
-database:
-  name: players.db
+| Key | Description |
+|---|---|
+| `database.name` | SQLite file, relative to the project folder |
+| `endpoints` | CNR player list URL per server (`eu1`, `eu2`, `us1`, `us2`, `sea1`) |
+| `server_status_endpoint` | CNR endpoint with player count and queue |
+| `status_endpoints` | Per server `info.json` used for the restart countdown, keyed `'server_name EU1'` |
+| `bottoken`, `guild_id`, `staff_role_id`, `crewmember_role_id` | Required |
+| `online_users_channel_id`, `leaderboard_channel_id`, `staff_logs_channel_id`, `monitored_channel_id` | Optional, a feature without its channel is skipped |
+| `embed_images.footer_thumbnail`, `embed_images.logs_thumbnail` | Footer icons, default to a built in image |
+| `verification.*` | `enabled`, `verification_channel_id`, `verified_role_id`, `logo_url` |
+| `moderation.warn_timeout_threshold` | Warnings after which a member is timed out automatically (default 3) |
+| `moderation.warn_timeout_minutes` | Length of that timeout, 1 to 40320 (default 60) |
+| `moderation.profanity.enabled` / `words` | Profanity filter for `monitored_channel_id`, whole word and case insensitive |
 
-# CNR api endpoints for each server. Wouldn't recommend changing these!
-endpoints:
-  eu1: "https://api.gtacnr.net/cnr/players?serverId=EU1"
-  eu2: "https://api.gtacnr.net/cnr/players?serverId=EU2"
-  us1: "https://api.gtacnr.net/cnr/players?serverId=US1"
-  us2: "https://api.gtacnr.net/cnr/players?serverId=US2"
-  sea1: "https://api.gtacnr.net/cnr/players?serverId=SEA"
-
-# Playercount,queue, endpoint. Wouldn't recommend changing it!
-server_status_endpoint: "https://api.gtacnr.net/cnr/servers"
-
-# Server status endpoints for each server. Wouldn't recommend changing these!
-status_endpoints:
-  'server_name EU1': 'https://195.181.175.122:30120/info.json'
-  'server_name EU2': 'https://195.181.175.122:30121/info.json'
-  'server_name US1': 'https://45.88.228.198:30120/info.json'
-  'server_name US2': 'https://45.88.228.198:30121/info.json'
-  'server_name SEA1': 'https://51.79.231.52:30130/info.json'
-
-# Set your bot token here
-bottoken: bot_token_here
-
-# Set your serverID and staff role ID
-guild_id: serverID_here
-staff_role_id: role_id_here
-crewmember_role_id: role_id_here
-
-# Channel ID where the online users embed will be posted and the leaderboard
-online_users_channel_id: channel_id_here 
-leaderboard_channel_id: channel_id_here 
-
-# Add channel ID for CNR status embed
-cnr_status_channel_id: channel_id_here 
-
-# Staff actions logs channel ID
-staff_logs_channel_id: channel_id_here
-
-# Configure your images for the embed messages
-embed_images:
-  linkuuid_thumbnail: "url"
-  linking_error_thumbnail: "url"
-  myuuid_thumbnail: "url"
-  footer_thumbnail: "url"
-  logs_thumbnail: "url"
-
-# Verification system configuration
-verification:
-  enabled: false  # Set to true to enable verification system, false to disable
-  verification_channel_id: channel_id_here  # Channel where verification message will be posted
-  verified_role_id: role_id_here  # Role that will be given after verification
-  logo_url: "url"  # Logo for verification embeds
-```
+IDs can be written with or without quotes.
 
 ## Commands
 
-- `/playtime @user`: Displays the total playtime of the mentioned user.
-- `/link <CNR_Username>`: Links your Discord account to your game UUID.
-- `/resetleaderboard`: Resets the playtime of all users in the database back to 0
-- `/mute <username> <reason> <duration>`: Timesout a discord member.
-- `/kick <username> <reason>`: Kicks a specific member from the discord server.
-- `/ban <username> <reason>`: Permamently bans a member from the discord server.
-- `!sync`: Synchronises all the slash commands to the serverid provided in the config.
+| Command | Who | Description |
+|---|---|---|
+| `/playtime member` | everyone | Total playtime of a linked member |
+| `/link username` | crewmember role | Link your Discord account to a game username |
+| `/unlink member` | Manage Roles | Remove a link |
+| `/removelinks` | Manage Roles | Unlink everyone who lost the crewmember role or left the server |
+| `/listallmembers` | staff role | Paginated list of all linked members with playtime |
+| `/resetleaderboard` | staff role | Set all playtimes to 0 |
+| `/kick member reason` | Kick Members | Kick a member |
+| `/ban member reason` | Ban Members | Ban a member |
+| `/mute member reason duration` | Moderate Members | Time a member out for 1 minute up to 1 week |
+| `/warn member reason` | Moderate Members | Warn a member, times them out at the configured threshold |
+| `/warnings member` | Moderate Members | Show the latest 10 warnings and the total |
+| `/clearwarnings member` | Moderate Members | Delete all warnings (a running timeout stays) |
+
+Moderation commands refuse to act on the server owner, the bot, yourself, or anyone whose highest role is not below yours.
 
 ## Contribution
 
