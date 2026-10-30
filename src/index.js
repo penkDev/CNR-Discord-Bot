@@ -29,6 +29,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
   partials: [Partials.Message, Partials.Channel],
+  allowedMentions: { parse: [] },
 });
 
 const commands = new Map();
