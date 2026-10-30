@@ -4,6 +4,7 @@ import { openDatabase } from '../src/db.js';
 import {
   buildProfanityRegex,
   describeWarning,
+  filterMessage,
   getModerationBlocker,
   issueWarning,
 } from '../src/services/moderation.js';
@@ -119,4 +120,75 @@ test('profanity regex handles unicode', () => {
 test('empty word list builds no regex', () => {
   assert.equal(buildProfanityRegex([]), null);
   assert.equal(buildProfanityRegex(['  ', '']), null);
+});
+
+const filterSetup = (profanityOverrides = {}) => {
+  const db = openDatabase(':memory:');
+  const config = {
+    staffRoleId: 'staff',
+    images: { logs: 'https://example.test/logs.gif', footer: 'https://example.test/footer.gif' },
+    channels: { monitored: 'chan', staffLogs: null },
+    moderation: { warnTimeoutThreshold: 3, warnTimeoutMinutes: 60, profanity: { enabled: true, ...profanityOverrides } },
+  };
+  const ctx = {
+    db,
+    config,
+    client: { user: { id: 'bot' }, channels: { fetch: async () => null } },
+    profanityRegex: buildProfanityRegex(['bad']),
+  };
+  const message = (overrides = {}) => {
+    const sent = { deleted: false };
+    return Object.assign({
+      id: 'm1',
+      channelId: 'chan',
+      content: 'this is bad',
+      author: { bot: false },
+      inGuild: () => true,
+      delete: async () => { sent.deleted = true; },
+      sent,
+      member: {
+        id: 'u1',
+        user: { tag: 'u1#0' },
+        permissions: { has: () => false },
+        roles: { cache: new Set() },
+        timeout: async () => {},
+        toString: () => '<@u1>',
+      },
+    }, overrides);
+  };
+  return { ctx, db, message };
+};
+
+test('filterMessage deletes a matching message and stores a warning', async () => {
+  const { ctx, db, message } = filterSetup();
+  const bad = message();
+  assert.equal(await filterMessage(ctx, bad), true);
+  assert.equal(bad.sent.deleted, true);
+  assert.equal(db.countWarnings('u1'), 1);
+  assert.equal(db.listWarnings('u1', 1)[0].moderator_id, 'bot');
+  db.close();
+});
+
+test('filterMessage ignores clean text, other channels, bots, staff and a disabled filter', async () => {
+  const { ctx, db, message } = filterSetup();
+  const staff = message();
+  staff.member.roles.cache.add('staff');
+  const moderator = message();
+  moderator.member.permissions.has = () => true;
+  const cases = [
+    message({ content: 'all fine' }),
+    message({ channelId: 'other' }),
+    message({ author: { bot: true } }),
+    message({ inGuild: () => false }),
+    message({ member: null }),
+    staff,
+    moderator,
+  ];
+  for (const candidate of cases) assert.equal(await filterMessage(ctx, candidate), false);
+  assert.equal(db.countWarnings('u1'), 0);
+
+  const off = filterSetup({ enabled: false });
+  assert.equal(await filterMessage(off.ctx, off.message()), false);
+  db.close();
+  off.db.close();
 });

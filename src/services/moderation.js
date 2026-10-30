@@ -1,3 +1,4 @@
+import { PermissionFlagsBits } from 'discord.js';
 import { Color, createEmbed, fetchTextChannel } from '../utils/embeds.js';
 import { UserError } from '../utils/checks.js';
 
@@ -102,9 +103,17 @@ export function buildProfanityRegex(words) {
   return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${alternatives.join('|')})(?![\\p{L}\\p{N}_])`, 'iu');
 }
 
-export async function handleProfanity(ctx, message, regex) {
-  const word = regex.exec(message.content)?.[0];
-  if (!word) return;
+/** Applies the profanity filter to a new or edited message. Returns true when the message was deleted. */
+export async function filterMessage(ctx, message) {
+  const { config, profanityRegex } = ctx;
+  if (!config.moderation.profanity.enabled || !profanityRegex) return false;
+  if (message.channelId !== config.channels.monitored) return false;
+  if (message.author?.bot || !message.inGuild() || !message.member) return false;
+  if (message.member.permissions.has(PermissionFlagsBits.ManageMessages)) return false;
+  if (message.member.roles.cache.has(config.staffRoleId)) return false;
+
+  const word = profanityRegex.exec(message.content ?? '')?.[0];
+  if (!word) return false;
 
   filterDeletedIds.add(message.id);
   try {
@@ -112,7 +121,7 @@ export async function handleProfanity(ctx, message, regex) {
   } catch (error) {
     filterDeletedIds.delete(message.id);
     console.error('Profanity filter could not delete a message:', error);
-    return;
+    return false;
   }
 
   const member = message.member;
@@ -121,15 +130,20 @@ export async function handleProfanity(ctx, message, regex) {
     moderatorId: ctx.client.user.id,
     reason: 'Auto: profanity filter',
   });
-  const embed = createEmbed(ctx.config, Color.orange)
+  const embed = createEmbed(config, Color.orange)
     .setTitle('🧹 Profanity Filter')
     .setTimestamp()
     .setDescription(
-      `**User:** ${member} (${member.user.tag})\n`
-      + `**Channel:** <#${message.channelId}>\n`
-      + `**Matched word:** ${word}\n`
-      + `**Warnings:** ${result.count}\n`
-      + describeWarning(result, ctx.config),
+      `**User:** ${member} (${member.user.tag})
+`
+      + `**Channel:** <#${message.channelId}>
+`
+      + `**Matched word:** ${word}
+`
+      + `**Warnings:** ${result.count}
+`
+      + describeWarning(result, config),
     );
   await sendStaffLog(ctx, embed);
+  return true;
 }
